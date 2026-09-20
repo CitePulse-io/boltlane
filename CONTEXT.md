@@ -46,12 +46,24 @@ Open-source, self-hostable residential-IP proxy network. This file is the glossa
 
 **Contribution** — destination-facing TCP payload bytes a Device carries for a Requestor after accepting a proxy connection. Upload and download bytes both count, including bytes carried before a later destination failure; tunnel and TLS framing overhead does not.
 
+**Consumption** — destination-facing TCP payload bytes charged to a Requestor after a Device accepts its proxy connection. It uses the same byte boundary as Contribution in the MVP, but belongs to Requestor billing rather than Provider compensation.
+
 **Usage receipt** — a Server identity-signed statement of a Device's measured Contribution and its snapshotted compensation rate. A Provider compares receipts with the Device's independent counters to audit reported earnings.
 
 **Available earnings** — finalized, undisputed sat-denominated credit that a Provider may claim once the Server's payout threshold is met. This is an accounting balance, not a completed Lightning payment.
 
 **Payout** — a transfer of Available earnings from the Server to a Provider's configured Lightning destination. A payout is distinct from metering, earnings finalization, and the Lightning network's settlement of the transfer.
 
-**x402 gating** — the payment-plug-in point on the Server: a Requestor must be pre-paid (invoice paid via Lightning/L402) or pay-per-request (x402-style) before traffic is routed. Default off when self-hosting.
+**Payment gate** — the Server boundary that decides whether an authenticated Requestor is financially authorized to open a proxy connection. It does not authenticate Requestors, select Devices, enforce traffic policy, or meter Contribution.
+
+**Service credit** — non-transferable, non-redeemable value denominated in millisatoshis that an Account's Requestors may spend only on proxy service. It is an accounting balance, not segregated Bitcoin or a claim that can be withdrawn, and is separate from Provider earnings and payouts.
+
+**Payment reservation** — Service credit temporarily committed when a proxy connection is admitted. Consumption settles against the reservation at the connection's snapshotted Requestor price, and any unused remainder is released.
+
+**Billing policy** — the payment treatment assigned to a Requestor: ungated access or consumption from prepaid Service credit. An Account may provide the default, but each Requestor has an explicit effective policy.
+
+**Requestor price** — the Operator-set rate at which Consumption uses Service credit. It is independent of the compensation rate paid to the selected Device's Provider and is snapshotted when a proxy connection begins.
+
+**Payment quote** — an expiring offer to grant a stated amount of Service credit in exchange for payment through one of the offered rails. Paying a quote grants credit at most once and does not lock a future Requestor price.
 
 **L402** — Lightning-native paid-API protocol (402 + macaroon + invoice). Candidate inbound rail for agent customers; x402's Lightning-native analog.
