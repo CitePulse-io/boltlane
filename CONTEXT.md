@@ -12,7 +12,21 @@ Open-source, self-hostable residential-IP proxy network. This file is the glossa
 
 **Peer client** — the Go program (plus later mobile apps) a Peer runs. Maintains an outbound persistent link to its pinned Server; accepts only that Server's permitted traffic; may inspect HTTP and TLS routing metadata to enforce local policy, but never stores payload content or decrypts end-to-end TLS.
 
-**Requestor** — an application consuming the network's proxy capacity. First Requestors are CitePulse and geo_optimize. A Requestor may be the Server operator's own app (dogfood) or a paying customer.
+**Account** — an organization-level security, quota, and billing boundary on a Server. An Account owns one or more Requestors. A self-hosted Server has an operator Account even when multi-tenant features are disabled.
+
+**Requestor** — an application or workload consuming the network's proxy capacity, owned by one Account. CitePulse and geo_optimize are separate Requestors even when they share the Server operator's Account.
+
+**Credential** — an independently scoped, rotatable, and revocable machine secret through which a Server authenticates one Requestor. A Credential is local to the issuing Server, not a network-wide Requestor identity.
+
+**Session** — an optional, expiring routing lease that keeps a Requestor on one eligible Device across multiple proxy connections. A Session exposes no stable Device identity to the Requestor.
+
+**Route constraints** — Requestor-supplied requirements for an eligible exit, such as geography, network type, carrier, or required capabilities. Each constraint is required, preferred, or unrestricted. Route constraints never identify a specific Peer or Device.
+
+**Service tier** — an operator-defined quality or cost treatment applied while routing Requestor traffic.
+
+**Workload class** — a declared Requestor traffic purpose linked to Server-side destination and protocol permissions.
+
+**Exit observation** — a short-lived, signed statement from a Server-trusted public observer identifying the public IP from which a Device reached it. A Server enriches this observation with approximate geographic and network metadata; the Device's own location claim is not authoritative.
 
 **Traffic policy** — rules over locally observable destination and connection attributes that a Peer sets for what their Device will carry. The Server filters traffic before routing it, and the Device independently enforces the Peer's policy, rejecting traffic it cannot verify without decrypting end-to-end TLS.
 
