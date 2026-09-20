@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Boltlane — open-source, self-hostable residential-IP proxy network. Go peer clients (Windows/Linux/macOS/Raspberry Pi; mobile later), a coordinating server, and Bitcoin Lightning payouts. See `CONTEXT.md` for domain glossary.
+Boltlane — open-source, self-hostable residential-IP proxy network. Go Device agents (Windows/Linux/macOS/Raspberry Pi; mobile later), a coordinating Server, and Bitcoin Lightning payouts. See `CONTEXT.md` for domain glossary.
 
 ## Workflow
 
