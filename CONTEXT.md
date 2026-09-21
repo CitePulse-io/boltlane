@@ -16,7 +16,7 @@ Open-source, self-hostable residential-IP proxy network. This file is the glossa
 
 **Account** — an organization-level security, quota, and billing boundary on a Server. An Account owns one or more Requestors. A self-hosted Server has an operator Account even when multi-tenant features are disabled.
 
-**Requestor** — an application or workload consuming the network's proxy capacity, owned by one Account. CitePulse and geo_optimize are separate Requestors even when they share the Server operator's Account.
+**Requestor** — an application or workload consuming the network's proxy capacity, owned by one Account. CitePulse is the initial Requestor; `geo_optimize` is the local repository name for the same product, not a separate Requestor.
 
 **Credential** — an independently scoped, rotatable, and revocable machine secret through which a Server authenticates one Requestor. A Credential is local to the issuing Server, not a network-wide Requestor identity.
 
