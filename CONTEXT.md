@@ -38,6 +38,16 @@ Open-source, self-hostable residential-IP proxy network. This file is the glossa
 
 **Resource allowance** — the operating limits a Provider sets for a Device, such as bandwidth, concurrency, data volume, and active hours. The Device enforces these limits independently of the Server.
 
+**Pacing policy** — limits on how quickly and concurrently a Requestor's traffic may reach a target through a Device. Operator and Provider limits are ceilings; a Requestor may ask for stricter pacing but cannot loosen them.
+
+**Target group** — an Operator-defined set of related destination hostnames that share pacing and cooldown treatment.
+
+**Outcome report** — an authenticated Requestor statement about a destination's response to a specific proxy connection, such as success, throttling, blocking, or a CAPTCHA. It is evidence for scheduling, not independently verified fact.
+
+**Cooldown** — a temporary exclusion of a Device from traffic to a particular target after adverse outcome evidence or a pacing limit. It does not make the Device unavailable for unrelated targets.
+
+**Canary** — a low-volume, Operator-controlled diagnostic request through a Device to an approved target. Its observed outcome may restore that Device-target pair after a cooldown; it says nothing about the Device's reputation at unrelated targets.
+
 **Pinning** — the enrollment act binding a Device to one Server's long-lived Ed25519 identity key, confirmed by the Provider. The Device agent refuses connections that cannot prove possession of that identity, independently of replaceable TLS credentials.
 
 ## Money
