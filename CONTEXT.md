@@ -18,6 +18,10 @@ Open-source, self-hostable residential-IP proxy network. This file is the glossa
 
 **Requestor** — an application or workload consuming the network's proxy capacity, owned by one Account. CitePulse is the initial Requestor; `geo_optimize` is the local repository name for the same product, not a separate Requestor.
 
+**Verified Requestor** — a Requestor whose responsible Account contact, declared use, and permitted Workload classes have been approved by the Operator. Verification is distinct from authentication by a Credential and from payment-rail identity checks.
+
+**Suspension** — an Operator-imposed hold on an Account or Requestor that prevents its traffic until an Operator reinstates it. A temporary rate throttle or a Provider pausing its own Device is not a suspension.
+
 **Credential** — an independently scoped, rotatable, and revocable machine secret through which a Server authenticates one Requestor. A Credential is local to the issuing Server, not a network-wide Requestor identity.
 
 **Session** — an optional, expiring routing lease that keeps a Requestor on one eligible Device across multiple proxy connections. A Session exposes no stable Device identity to the Requestor.
