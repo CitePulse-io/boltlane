@@ -167,7 +167,9 @@ func server() error {
 	if user == "" || len(password) < 24 {
 		return errors.New("proxy credentials missing or weak")
 	}
-	s := &proxy.Server{Policy: p, Username: user, Password: password, Identity: identity, DeviceKey: deviceKey}
+	s := &proxy.Server{Policy: p, Username: user, Password: password, Identity: identity, DeviceKey: deviceKey, Logger: func(format string, args ...any) {
+		log.Printf(format, args...)
+	}}
 	addr := os.Getenv("BOLTLANE_LISTEN")
 	if addr == "" {
 		addr = ":8080"
