@@ -191,7 +191,17 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, stream net.Conn
 		n, _ := io.Copy(dst, src)
 		return n
 	}
-	go func() { upstream = count(stream, buffered); close(done) }()
+	go func() {
+		// Hide bufio.Reader's WriteTo optimization: when its buffer is
+		// empty, it can issue a zero-length write to a yamux stream and
+		// stall instead of waiting for bytes from the client.
+		upstream = count(stream, struct{ io.Reader }{buffered})
+		// A client can finish while the origin leaves its TLS connection
+		// open. Tear down the tunnel now so the Device frees its slot.
+		stream.Close()
+		client.Close()
+		close(done)
+	}()
 	downstream = count(client, stream)
 	client.Close()
 	stream.Close()
