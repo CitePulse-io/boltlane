@@ -143,10 +143,32 @@ func TestWatchSessionKeepaliveFailure(t *testing.T) {
 	}
 	select {
 	case reason := <-reasons:
-		if reason != "keepalive_failed" && reason != "keepalive_timeout" {
+		if reason != "keepalive_failed" && reason != "keepalive_timeout" && reason != "session_ended" {
 			t.Fatalf("unexpected close reason: %s", reason)
 		}
 	default:
+	}
+}
+
+func TestWatchSessionStopsWhenSessionCloses(t *testing.T) {
+	client, peer := net.Pipe()
+	defer peer.Close()
+	config := muxConfig()
+	config.LogOutput = io.Discard
+	session, err := yamux.Client(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reason := make(chan string, 1)
+	go watchSession(context.Background(), session, nil, func(event string) { reason <- event })
+	session.Close()
+	select {
+	case got := <-reason:
+		if got != "session_ended" {
+			t.Fatalf("close reason = %q, want session_ended", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("watcher did not exit when session closed")
 	}
 }
 

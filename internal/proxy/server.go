@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bufio"
-	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -220,13 +219,9 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Link.Set(session)
-	watchCtx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	go watchSession(watchCtx, session, ws, func(reason string) {
+	watchSession(r.Context(), session, ws, func(reason string) {
 		s.logf("event=tunnel_closed reason=%s", reason)
 	})
-	<-session.CloseChan()
-	s.logf("event=tunnel_closed reason=session_ended")
 }
 
 func proxyError(w http.ResponseWriter, status int, reason string) {

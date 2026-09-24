@@ -38,42 +38,45 @@ func muxConfig() *yamux.Config {
 	return config
 }
 
-// watchSession closes the session when the context ends, when the underlying
-// WebSocket stops responding to pings, or when yamux keepalives fail. Each
-// watcher returns the reason the tunnel ended.
+// watchSession closes the session when the context ends or a liveness probe
+// fails, and returns when yamux closes it independently.
 func watchSession(ctx context.Context, session *yamux.Session, ws *websocket.Conn, onEvent func(string)) {
-	done := make(chan string, 4)
-	go func() {
-		<-ctx.Done()
-		done <- "context_canceled"
-	}()
-	go func() {
-		ticker := time.NewTicker(tunnelKeepalive)
-		defer ticker.Stop()
-		for range ticker.C {
-			// A ping to an unresponsive peer blocks until the yamux write
-			// timeout (10s), so bound the whole probe and close on timeout.
+	ticker := time.NewTicker(tunnelKeepalive)
+	defer ticker.Stop()
+	reason := "session_ended"
+	for {
+		select {
+		case <-ctx.Done():
+			reason = "context_canceled"
+		case <-session.CloseChan():
+		case <-ticker.C:
 			result := make(chan error, 1)
 			go func() { _, err := session.Ping(); result <- err }()
 			select {
 			case err := <-result:
 				if err != nil {
-					done <- "keepalive_failed"
-					return
+					reason = "keepalive_failed"
 				}
 			case <-time.After(10 * time.Second):
-				done <- "keepalive_timeout"
-				return
+				reason = "keepalive_timeout"
+			case <-ctx.Done():
+				reason = "context_canceled"
+			case <-session.CloseChan():
 			}
-			if ws != nil {
-				if err := ws.Ping(context.Background()); err != nil {
-					done <- "websocket_ping_failed"
-					return
+			if reason == "session_ended" && ws != nil {
+				pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				err := ws.Ping(pingCtx)
+				cancel()
+				if err != nil {
+					reason = "websocket_ping_failed"
 				}
 			}
+			if reason == "session_ended" && !session.IsClosed() {
+				continue
+			}
 		}
-	}()
-	reason := <-done
+		break
+	}
 	session.Close()
 	if onEvent != nil {
 		onEvent(reason)
