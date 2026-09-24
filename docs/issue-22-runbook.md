@@ -110,3 +110,19 @@ exit must be tested before claiming the issue's retrieval acceptance. Enrollment
 here uses manually exchanged keys, not one-time invitations, issued short-lived
 certificates, key rotation or a control API. CitePulse's Python fetch integration
 is in a separate repository and is not implemented here.
+
+## Exit-IP observation record (2026-09-23)
+
+Trusted observer: `api.ipify.org` (public echo, Operator-approved). Baseline
+taken directly on the Mac outside the tunnel; observation fetched through the
+deployed proxy path (probe in the Boltlane container → Server → tunnel → Mac
+Device → residential exit) after PR #33 added the observer to the probe and
+both policies.
+
+- Baseline (Mac, direct): `167.224.189.201`
+- Observed through the tunnel: `167.224.189.201` — **match**
+- Deployment: `7cf0ac67` (SUCCESS); Device log confirms approved policy
+  `hosts=[quikrstuff.com api.ipify.org] ports=[80 443]`
+
+This satisfies the runbook's trusted-exit-IP-observation check: the target
+observer saw the Device public exit IP, not the tunnel source IP.
