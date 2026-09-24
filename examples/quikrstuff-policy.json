@@ -1,4 +1,4 @@
 {
-  "Hosts": ["quikrstuff.com"],
+  "Hosts": ["quikrstuff.com", "api.ipify.org"],
   "Ports": [80, 443]
 }
