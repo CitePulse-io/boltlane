@@ -126,3 +126,24 @@ both policies.
 
 This satisfies the runbook's trusted-exit-IP-observation check: the target
 observer saw the Device public exit IP, not the tunnel source IP.
+
+## Live retrieval record (2026-09-23, after PR #35)
+
+Probe rebuilt with descriptor mode, `CF-Mitigated: challenge` header check,
+and a declared `CitePulseBot/1.0` User-Agent (no browser impersonation, so
+the pass is attributable to the residential exit rather than header factors).
+Deployment `7adb8344` (SUCCESS). Fetched one at a time through the deployed
+private path; canary stop rules in force (no retry, no exit rotation).
+
+| URL | Result |
+| --- | --- |
+| `https://quikrstuff.com/` | 200, text/html, 168237 bytes, title "QuikrStuff - Proudly made in the USA ... Home of the Quik Rack Mach2 Bicycle Rack", no challenge indicator |
+| `https://quikrstuff.com/llms.txt` | 200, text/plain, 6985 bytes, no challenge indicator |
+| `https://quikrstuff.com/.well-known/llms.txt` | 404 (origin not-found; no CF-Mitigated, not a block; descriptor absent at that path) |
+| `https://quikrstuff.com/sitemap.xml` | 200, text/xml, 635 bytes, no challenge indicator |
+
+No 403/429, no `CF-Mitigated: challenge`, no marker text on any response.
+The earlier ambiguous canary flag did not recur; the narrowed marker list
+plus the header check produced unambiguous clean results on all fetched
+URLs. The `/.well-known/llms.txt` 404 is an absent descriptor, not a bot
+block, so the canary stays armed and unaffected.
