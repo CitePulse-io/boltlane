@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -17,6 +18,42 @@ import (
 
 	"github.com/hashicorp/yamux"
 )
+
+func TestConnectClosesDeviceStreamWhenClientDisconnects(t *testing.T) {
+	serverStream, deviceStream := net.Pipe()
+	defer deviceStream.Close()
+	finished := make(chan struct{})
+	s := &Server{}
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.connect(w, r, serverStream, time.Now())
+		close(finished)
+	}))
+	defer proxy.Close()
+	go writeFrame(deviceStream, Result{})
+	client, err := net.Dial("tcp", proxy.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Fprint(client, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n")
+	reader := bufio.NewReader(client)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+	client.Close()
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		deviceStream.Close()
+		<-finished
+		t.Fatal("proxy held CONNECT open after client disconnected")
+	}
+}
 
 func TestServerEventStream(t *testing.T) {
 	_, serverKey, _ := ed25519.GenerateKey(rand.Reader)
@@ -283,7 +320,12 @@ func TestHTTPSConnectThroughDevice(t *testing.T) {
 	devicePolicy.DialIP = func(ctx context.Context, _ string, _ int) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", strings.TrimPrefix(target.URL, "https://"))
 	}
-	s := &Server{Policy: policy, Username: "requestor", Password: "secret", Identity: serverKey, DeviceKey: deviceKey.Public().(ed25519.PublicKey)}
+	closed := make(chan struct{}, 1)
+	s := &Server{Policy: policy, Username: "requestor", Password: "secret", Identity: serverKey, DeviceKey: deviceKey.Public().(ed25519.PublicKey), Logger: func(format string, _ ...any) {
+		if strings.HasPrefix(format, "event=connect_done") {
+			closed <- struct{}{}
+		}
+	}}
 	proxy := httptest.NewTLSServer(s)
 	defer proxy.Close()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -304,7 +346,8 @@ func TestHTTPSConnectThroughDevice(t *testing.T) {
 	}
 	proxyURL, _ := url.Parse(proxy.URL)
 	proxyURL.User = url.UserPassword("requestor", "secret")
-	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL), TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL), TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	client := &http.Client{Transport: transport}
 	response, err := client.Get("https://example.com/")
 	if err != nil {
 		t.Fatal(err)
@@ -313,5 +356,12 @@ func TestHTTPSConnectThroughDevice(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != 200 || string(body) != "tls target" {
 		t.Fatalf("got %d %q", response.StatusCode, body)
+	}
+	transport.CloseIdleConnections()
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		s.Link.Set(nil)
+		t.Fatal("CONNECT stream stayed open after client closed its idle connection")
 	}
 }
