@@ -23,6 +23,16 @@ type Server struct {
 	Identity           ed25519.PrivateKey
 	DeviceKey          ed25519.PublicKey
 	Link               Link
+	// Logger receives operational events (tunnel lifecycle, per-request
+	// outcomes, auth and policy refusals). Metadata only: never request or
+	// response content, credentials, or keys.
+	Logger func(format string, args ...any)
+}
+
+func (s *Server) logf(format string, args ...any) {
+	if s.Logger != nil {
+		s.Logger(format, args...)
+	}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -37,30 +47,36 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		username, password, ok = probe.BasicAuth()
 	}
 	if !ok || subtle.ConstantTimeCompare([]byte(username), []byte(s.Username)) != 1 || !sameSecret(password, s.Password) {
+		s.logf("event=auth_failed remote=%s", r.RemoteAddr)
 		w.Header().Set("Proxy-Authenticate", `Basic realm="boltlane"`)
 		proxyError(w, http.StatusProxyAuthRequired, "authentication_failed")
 		return
 	}
 	host, port, err := destination(r)
 	if err != nil || !s.Policy.Allows(host, port) {
+		s.logf("event=destination_forbidden host=%s port=%d method=%s remote=%s", host, port, r.Method, r.RemoteAddr)
 		proxyError(w, http.StatusForbidden, "destination_forbidden")
 		return
 	}
 	stream, err := s.Link.Open()
 	if err != nil {
+		s.logf("event=device_unavailable host=%s port=%d method=%s", host, port, r.Method)
 		proxyError(w, http.StatusServiceUnavailable, "device_unavailable")
 		return
 	}
 	defer stream.Close()
+	start := time.Now()
+	s.logf("event=request_open method=%s host=%s port=%d", r.Method, host, port)
 	stream.SetDeadline(time.Now().Add(15 * time.Second))
 	if err = writeFrame(stream, Open{Version: 1, Method: r.Method, Host: host, Port: port}); err != nil {
+		s.logf("event=tunnel_interrupted host=%s port=%d method=%s", host, port, r.Method)
 		proxyError(w, http.StatusServiceUnavailable, "tunnel_interrupted")
 		return
 	}
 	if r.Method == http.MethodConnect {
-		s.connect(w, r, stream)
+		s.connect(w, r, stream, start)
 	} else {
-		s.forward(w, r, stream)
+		s.forward(w, r, stream, start)
 	}
 }
 
@@ -95,31 +111,36 @@ func destination(r *http.Request) (string, int, error) {
 	return strings.ToLower(host), n, nil
 }
 
-func (s *Server) forward(w http.ResponseWriter, r *http.Request, stream net.Conn) {
+func (s *Server) forward(w http.ResponseWriter, r *http.Request, stream net.Conn, start time.Time) {
 	request := r.Clone(r.Context())
 	request.Header.Del("Proxy-Authorization")
 	request.Header.Del("Proxy-Connection")
 	request.Close = true
 	if err := request.Write(stream); err != nil {
+		s.logf("event=tunnel_interrupted method=%s host=%s", request.Method, request.URL.Host)
 		proxyError(w, http.StatusServiceUnavailable, "tunnel_interrupted")
 		return
 	}
 	var result Result
 	if err := readFrame(stream, &result); err != nil {
+		s.logf("event=tunnel_interrupted method=%s host=%s", request.Method, request.URL.Host)
 		proxyError(w, http.StatusServiceUnavailable, "tunnel_interrupted")
 		return
 	}
 	if result.Error != "" {
+		s.logf("event=device_refused method=%s host=%s reason=%s", request.Method, request.URL.Host, result.Error)
 		writeResultError(w, result.Error)
 		return
 	}
 	stream.SetDeadline(time.Time{})
 	response, err := http.ReadResponse(bufio.NewReader(stream), request)
 	if err != nil {
+		s.logf("event=destination_connection_failed method=%s host=%s", request.Method, request.URL.Host)
 		proxyError(w, http.StatusBadGateway, "destination_connection_failed")
 		return
 	}
 	defer response.Body.Close()
+	s.logf("event=request_done method=%s host=%s status=%d duration_ms=%d", request.Method, request.URL.Host, response.StatusCode, time.Since(start).Milliseconds())
 	for key, values := range response.Header {
 		if strings.EqualFold(key, "Proxy-Authorization") || strings.EqualFold(key, "Connection") {
 			continue
@@ -132,13 +153,16 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, stream net.Conn
 	io.Copy(w, response.Body)
 }
 
-func (s *Server) connect(w http.ResponseWriter, r *http.Request, stream net.Conn) {
+func (s *Server) connect(w http.ResponseWriter, r *http.Request, stream net.Conn, start time.Time) {
+	host := r.Host
 	var result Result
 	if err := readFrame(stream, &result); err != nil {
+		s.logf("event=tunnel_interrupted method=CONNECT host=%s", host)
 		proxyError(w, http.StatusServiceUnavailable, "tunnel_interrupted")
 		return
 	}
 	if result.Error != "" {
+		s.logf("event=device_refused method=CONNECT host=%s reason=%s", host, result.Error)
 		writeResultError(w, result.Error)
 		return
 	}
@@ -159,32 +183,44 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, stream net.Conn
 	if err := buffered.Flush(); err != nil {
 		return
 	}
+	s.logf("event=connect_established host=%s", host)
 	// Buffered bytes after the CONNECT headers are still part of the TLS hello.
 	done := make(chan struct{})
-	go func() { io.Copy(stream, buffered); close(done) }()
-	io.Copy(client, stream)
+	var upstream, downstream int64
+	count := func(dst io.Writer, src io.Reader) int64 {
+		n, _ := io.Copy(dst, src)
+		return n
+	}
+	go func() { upstream = count(stream, buffered); close(done) }()
+	downstream = count(client, stream)
 	client.Close()
 	stream.Close()
 	<-done
+	s.logf("event=connect_done host=%s duration_ms=%d upstream_bytes=%d downstream_bytes=%d", host, time.Since(start).Milliseconds(), upstream, downstream)
 }
 
 func (s *Server) tunnel(w http.ResponseWriter, r *http.Request) {
+	s.logf("event=tunnel_attempt remote=%s", r.RemoteAddr)
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{OriginPatterns: []string{"*"}})
 	if err != nil {
 		return
 	}
 	conn := socketConn(ws)
 	if err := authenticate(conn, true, s.Identity, s.DeviceKey); err != nil {
+		s.logf("event=tunnel_auth_failed remote=%s", r.RemoteAddr)
 		conn.Close()
 		return
 	}
+	s.logf("event=tunnel_connected remote=%s", r.RemoteAddr)
 	session, err := yamux.Server(conn, nil)
 	if err != nil {
+		s.logf("event=tunnel_error stage=yamux")
 		conn.Close()
 		return
 	}
 	s.Link.Set(session)
 	<-session.CloseChan()
+	s.logf("event=tunnel_closed")
 }
 
 func proxyError(w http.ResponseWriter, status int, reason string) {

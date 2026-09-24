@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +15,74 @@ import (
 	"testing"
 	"time"
 )
+
+func TestServerEventStream(t *testing.T) {
+	_, serverKey, _ := ed25519.GenerateKey(rand.Reader)
+	_, deviceKey, _ := ed25519.GenerateKey(rand.Reader)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("served through device secret-content"))
+	}))
+	defer target.Close()
+	targetAddress := strings.TrimPrefix(target.URL, "http://")
+	policy := Policy{Hosts: []string{"example.com"}, Ports: []int{80, 443}}
+	devicePolicy := policy
+	devicePolicy.Resolve = func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("93.184.215.14")}, nil }
+	devicePolicy.DialIP = func(ctx context.Context, _ string, _ int) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", targetAddress)
+	}
+	var logs []string
+	s := &Server{Policy: policy, Username: "requestor", Password: "secret", Identity: serverKey, DeviceKey: deviceKey.Public().(ed25519.PublicKey), Logger: func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}}
+	proxy := httptest.NewTLSServer(s)
+	defer proxy.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	device := &Device{Policy: devicePolicy, Identity: deviceKey, ServerKey: serverKey.Public().(ed25519.PublicKey), HTTPClient: proxy.Client()}
+	go device.Run(ctx, "wss"+strings.TrimPrefix(proxy.URL, "https")+"/boltlane/v1/tunnel")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		conn, err := s.Link.Open()
+		if err == nil {
+			conn.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("device did not connect")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	proxyURL, _ := url.Parse(proxy.URL)
+	proxyURL.User = url.UserPassword("requestor", "secret")
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL), TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	response, err := client.Get("http://example.com/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	response, err = client.Get("http://forbidden.example/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	unauthenticated := &http.Client{Transport: &http.Transport{Proxy: func(*http.Request) (*url.URL, error) {
+		return url.Parse(proxy.URL)
+	}, TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	response, err = unauthenticated.Get("http://example.com/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	combined := strings.Join(logs, "\n")
+	for _, want := range []string{"event=tunnel_connected", "event=request_open", "event=request_done", "event=destination_forbidden", "event=auth_failed"} {
+		if !strings.Contains(combined, want) {
+			t.Errorf("event %q missing from server log: %s", want, combined)
+		}
+	}
+	if strings.Contains(combined, "secret-content") || strings.Contains(combined, "secret") {
+		t.Errorf("response or credential content leaked into server log: %s", combined)
+	}
+}
 
 func TestAuthenticatedProxyThroughDevice(t *testing.T) {
 	_, serverKey, _ := ed25519.GenerateKey(rand.Reader)
