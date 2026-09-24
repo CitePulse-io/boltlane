@@ -10,5 +10,6 @@ FROM alpine:3.21
 RUN adduser -D -u 10001 boltlane
 USER boltlane
 COPY --from=build /boltlane /usr/local/bin/boltlane
+COPY examples/quikrstuff-policy.json /etc/boltlane/quikrstuff-policy.json
 EXPOSE 8080
 ENTRYPOINT ["boltlane", "server"]
