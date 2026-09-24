@@ -55,6 +55,50 @@ func TestConnectClosesDeviceStreamWhenClientDisconnects(t *testing.T) {
 	}
 }
 
+func TestDeviceReleasesConnectWhenProxyStreamCloses(t *testing.T) {
+	deviceStream, proxyStream := net.Pipe()
+	defer proxyStream.Close()
+	deviceTarget, origin := net.Pipe()
+	defer origin.Close()
+	policy := Policy{Hosts: []string{"example.com"}, Ports: []int{443}}
+	policy.Resolve = func(context.Context, string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("93.184.215.14")}, nil
+	}
+	policy.DialIP = func(context.Context, string, int) (net.Conn, error) { return deviceTarget, nil }
+	d := &Device{Policy: policy}
+	finished := make(chan struct{})
+	go func() {
+		d.connect(context.Background(), deviceStream, Open{Host: "example.com", Port: 443, Method: http.MethodConnect})
+		close(finished)
+	}()
+	var result Result
+	if err := readFrame(proxyStream, &result); err != nil || result.Error != "" {
+		t.Fatalf("connect opening result: %+v, %v", result, err)
+	}
+	client := tls.Client(proxyStream, &tls.Config{ServerName: "example.com", InsecureSkipVerify: true})
+	go client.Handshake()
+	helloReceived := make(chan struct{})
+	go func() {
+		buffer := make([]byte, 4096)
+		origin.Read(buffer)
+		close(helloReceived)
+		io.Copy(io.Discard, origin)
+	}()
+	select {
+	case <-helloReceived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Device did not forward the TLS ClientHello")
+	}
+	proxyStream.Close()
+	select {
+	case <-finished:
+	case <-time.After(2 * time.Second):
+		origin.Close()
+		<-finished
+		t.Fatal("Device held its CONNECT slot after the proxy stream closed")
+	}
+}
+
 func TestServerEventStream(t *testing.T) {
 	_, serverKey, _ := ed25519.GenerateKey(rand.Reader)
 	_, deviceKey, _ := ed25519.GenerateKey(rand.Reader)

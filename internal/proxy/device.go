@@ -108,7 +108,15 @@ func (d *Device) connect(ctx context.Context, stream net.Conn, open Open) {
 		return
 	}
 	done := make(chan struct{})
-	go func() { io.CopyN(conn, stream, maxTransfer); close(done) }()
+	go func() {
+		io.CopyN(conn, stream, maxTransfer)
+		// The proxy client can close while the origin keeps its TLS socket
+		// idle. Closing the origin unblocks the other copy and frees this
+		// Device stream slot immediately.
+		conn.Close()
+		stream.Close()
+		close(done)
+	}()
 	io.CopyN(stream, conn, maxTransfer)
 	conn.Close()
 	stream.Close()
