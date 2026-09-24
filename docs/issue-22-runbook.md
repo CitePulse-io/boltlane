@@ -31,13 +31,16 @@ No policy is loaded implicitly; unknown fields and empty policies are rejected.
 
 ## Server in the CitePulse Railway project/environment
 
-Build the Dockerfile as a new service in the existing CitePulse project and
-environment. Mount the Server identity and policy as protected files, and set:
+The production service is declared in the existing CitePulse IaC file at
+`geo_optimize/.railway/railway.ts`; run `railway config plan` there before
+applying changes. Build the Boltlane Dockerfile in that project/environment.
+Set the Server identity as a protected Railway variable and use the image's
+narrow example policy:
 
 ```
-BOLTLANE_SERVER_KEY_FILE=/secrets/server.key
+BOLTLANE_SERVER_KEY_B64=<base64-private-key-in-Railway-variables>
 BOLTLANE_DEVICE_PUBLIC_KEY=<base64-public-key>
-BOLTLANE_POLICY_FILE=/secrets/server-policy.json
+BOLTLANE_POLICY_FILE=/etc/boltlane/quikrstuff-policy.json
 BOLTLANE_PROXY_USER=<credential-id>
 BOLTLANE_PROXY_PASSWORD=<random-secret-at-least-24-characters>
 BOLTLANE_LISTEN=:8080
@@ -48,16 +51,17 @@ The unsafe option is for a listener reached only through Railway's TLS edge
 and trusted private network. Do not publish the raw listener as an unsecured
 TCP proxy. Create a Railway HTTPS domain for the Device tunnel; the public
 edge terminates TLS and forwards WebSocket Upgrade requests to port 8080.
+Railway IaC cannot register a new custom domain; create a Railway-generated
+HTTPS domain on port 8080 separately and verify it with `railway domain list`.
 The proxy client connects to the Server via its private Railway address on
 port 8080. For a directly public listener outside Railway, omit the unsafe
 option and set `BOLTLANE_TLS_CERT` and `BOLTLANE_TLS_KEY` instead.
 
-This container requires the two files provisioned before launch. The default
-container does not contain secrets. Do not deploy an unconfigured service into
-production merely to obtain a public domain; arrange secure file provisioning
-first. When using Railway variables rather than mounted secrets, create the
-files in a service startup step with restrictive permissions, outside source
-control, before running `boltlane server`.
+The image contains only the public hostname policy; it does not contain any
+keys or proxy credentials. The Server can alternatively use a protected
+`BOLTLANE_SERVER_KEY_FILE` (mode 0600), but never configure both sources.
+Do not deploy an unconfigured service into production merely to obtain a
+public domain; arrange secret provisioning first.
 
 ## Device on the Operator Mac
 
@@ -92,6 +96,12 @@ proxy, one at a time. Inspect final URL, content type, page identity and HTML
 for a challenge. An origin 403/429, CAPTCHA or other challenge ends the live
 canary; do not rotate exits or retry around a block. A 200 CONNECT alone proves
 no HTML was retrieved. Keep response content and credentials out of proxy logs.
+`boltlane probe https://quikrstuff.com/` from the Boltlane Railway container
+uses ordinary proxy Basic authentication against its local private listener
+and prints only status, final URL, content type, body size and title. It is a
+diagnostic, not proof of a trusted exit IP or of CitePulse ingestion. Stop on
+any suspicious challenge indication and inspect existing evidence rather
+than blindly repeating a live request.
 
 This first slice uses WebSocket binary messages with yamux multiplexing and a
 versioned bounded per-stream opening frame. It does not implement raw ALPN h2

@@ -33,7 +33,7 @@ func main() {
 
 func run() error {
 	if len(os.Args) < 2 {
-		return errors.New("usage: boltlane keygen <private-key-file> | server | device")
+		return errors.New("usage: boltlane keygen <private-key-file> | server | device | probe <https-url>")
 	}
 	switch os.Args[1] {
 	case "keygen":
@@ -62,6 +62,11 @@ func run() error {
 		return server()
 	case "device":
 		return device()
+	case "probe":
+		if len(os.Args) != 3 {
+			return errors.New("usage: boltlane probe <https-url>")
+		}
+		return probe(os.Args[2])
 	default:
 		return errors.New("unknown command")
 	}
@@ -76,6 +81,16 @@ func publicKey(name string) (ed25519.PublicKey, error) {
 }
 
 func privateKey(name string) (ed25519.PrivateKey, error) {
+	if name == "BOLTLANE_SERVER_KEY_FILE" && os.Getenv("BOLTLANE_SERVER_KEY_B64") != "" {
+		if os.Getenv(name) != "" {
+			return nil, errors.New("configure only one Server identity key source")
+		}
+		value, err := base64.StdEncoding.DecodeString(os.Getenv("BOLTLANE_SERVER_KEY_B64"))
+		if err != nil || len(value) != ed25519.PrivateKeySize {
+			return nil, errors.New("invalid Server identity key")
+		}
+		return ed25519.PrivateKey(value), nil
+	}
 	path := os.Getenv(name)
 	if path == "" {
 		return nil, fmt.Errorf("missing %s", name)
