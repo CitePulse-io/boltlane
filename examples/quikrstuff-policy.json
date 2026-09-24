@@ -1,0 +1,4 @@
+{
+  "Hosts": ["quikrstuff.com"],
+  "Ports": [80, 443]
+}
