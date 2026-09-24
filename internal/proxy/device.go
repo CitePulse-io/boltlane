@@ -42,13 +42,15 @@ func (d *Device) Run(ctx context.Context, url string) error {
 		conn.Close()
 		return err
 	}
-	session, err := yamux.Client(conn, nil)
+	session, err := yamux.Client(conn, muxConfig())
 	if err != nil {
 		conn.Close()
 		return err
 	}
 	defer session.Close()
-	go func() { <-ctx.Done(); session.Close() }()
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go watchSession(watchCtx, session, ws, nil)
 	capacity := make(chan struct{}, maxConnections)
 	for {
 		stream, err := session.Accept()

@@ -20,7 +20,65 @@ import (
 
 const MaxFrame = 4096
 
+// tunnelKeepalive is the interval at which the Device verifies the tunnel is
+// still alive. Residential NAT and firewall state silently drops idle
+// connections; without an application-level probe neither endpoint notices
+// until a request fails through a dead session.
+const tunnelKeepalive = 20 * time.Second
+
 var ErrServerIdentityMismatch = errors.New("server identity mismatch")
+
+// muxConfig returns yamux configuration with aggressive keepalives so a
+// half-open connection is detected within seconds instead of minutes.
+func muxConfig() *yamux.Config {
+	config := yamux.DefaultConfig()
+	config.EnableKeepAlive = true
+	config.KeepAliveInterval = tunnelKeepalive
+	config.ConnectionWriteTimeout = 10 * time.Second
+	return config
+}
+
+// watchSession closes the session when the context ends, when the underlying
+// WebSocket stops responding to pings, or when yamux keepalives fail. Each
+// watcher returns the reason the tunnel ended.
+func watchSession(ctx context.Context, session *yamux.Session, ws *websocket.Conn, onEvent func(string)) {
+	done := make(chan string, 4)
+	go func() {
+		<-ctx.Done()
+		done <- "context_canceled"
+	}()
+	go func() {
+		ticker := time.NewTicker(tunnelKeepalive)
+		defer ticker.Stop()
+		for range ticker.C {
+			// A ping to an unresponsive peer blocks until the yamux write
+			// timeout (10s), so bound the whole probe and close on timeout.
+			result := make(chan error, 1)
+			go func() { _, err := session.Ping(); result <- err }()
+			select {
+			case err := <-result:
+				if err != nil {
+					done <- "keepalive_failed"
+					return
+				}
+			case <-time.After(10 * time.Second):
+				done <- "keepalive_timeout"
+				return
+			}
+			if ws != nil {
+				if err := ws.Ping(context.Background()); err != nil {
+					done <- "websocket_ping_failed"
+					return
+				}
+			}
+		}
+	}()
+	reason := <-done
+	session.Close()
+	if onEvent != nil {
+		onEvent(reason)
+	}
+}
 
 type Open struct {
 	Version int    `json:"version"`
@@ -144,6 +202,10 @@ func (l *Link) Open() (net.Conn, error) {
 	l.mu.RUnlock()
 	if s == nil || s.IsClosed() {
 		return nil, errors.New("no device")
+	}
+	if _, err := s.Ping(); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("device unresponsive: %w", err)
 	}
 	stream, err := s.Open()
 	if err != nil {
