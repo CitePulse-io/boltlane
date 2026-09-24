@@ -212,15 +212,16 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logf("event=tunnel_connected remote=%s", r.RemoteAddr)
-	session, err := yamux.Server(conn, nil)
+	session, err := yamux.Server(conn, muxConfig())
 	if err != nil {
 		s.logf("event=tunnel_error stage=yamux")
 		conn.Close()
 		return
 	}
 	s.Link.Set(session)
-	<-session.CloseChan()
-	s.logf("event=tunnel_closed")
+	watchSession(r.Context(), session, ws, func(reason string) {
+		s.logf("event=tunnel_closed reason=%s", reason)
+	})
 }
 
 func proxyError(w http.ResponseWriter, status int, reason string) {

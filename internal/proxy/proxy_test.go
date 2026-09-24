@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/yamux"
 )
 
 func TestServerEventStream(t *testing.T) {
@@ -81,6 +83,92 @@ func TestServerEventStream(t *testing.T) {
 	}
 	if strings.Contains(combined, "secret-content") || strings.Contains(combined, "secret") {
 		t.Errorf("response or credential content leaked into server log: %s", combined)
+	}
+}
+
+func TestLinkDetectsStaleSession(t *testing.T) {
+	_, serverKey, _ := ed25519.GenerateKey(rand.Reader)
+	_, deviceKey, _ := ed25519.GenerateKey(rand.Reader)
+	s := &Server{Identity: serverKey, DeviceKey: deviceKey.Public().(ed25519.PublicKey)}
+	client, serverConn := net.Pipe()
+	defer client.Close()
+	// A yamux session over a pipe whose peer is gone: IsClosed stays false
+	// after the pipe breaks, so only the liveness ping catches it.
+	serverConn.Close()
+	config := muxConfig()
+	config.LogOutput = io.Discard
+	session, err := yamux.Client(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Link.Set(session)
+	if _, err := s.Link.Open(); err == nil {
+		t.Fatal("stale session accepted")
+	}
+	if !session.IsClosed() {
+		t.Fatal("stale session was not closed after failed ping")
+	}
+}
+
+func TestWatchSessionKeepaliveFailure(t *testing.T) {
+	client, serverConn := net.Pipe()
+	defer serverConn.Close()
+	config := muxConfig()
+	config.LogOutput = io.Discard
+	// yamux's own keepalive (interval 20s) would close the session at ~30s;
+	// shorten the interval so this test exercises the failure path quickly.
+	config.KeepAliveInterval = 500 * time.Millisecond
+	config.ConnectionWriteTimeout = 1 * time.Second
+	session, err := yamux.Client(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := make(chan string, 1)
+	done := make(chan struct{})
+	go func() {
+		watchSession(context.Background(), session, nil, func(reason string) { reasons <- reason; close(done) })
+	}()
+	// With no yamux server answering pings, either the watcher's probe or
+	// yamux's own keepalive must fail and close the session promptly.
+	deadline := time.Now().Add(15 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	closed := false
+	for !closed && time.Now().Before(deadline) {
+		<-ticker.C
+		closed = session.IsClosed()
+	}
+	if !closed {
+		t.Fatal("session not closed after keepalive failure")
+	}
+	select {
+	case reason := <-reasons:
+		if reason != "keepalive_failed" && reason != "keepalive_timeout" && reason != "session_ended" {
+			t.Fatalf("unexpected close reason: %s", reason)
+		}
+	default:
+	}
+}
+
+func TestWatchSessionStopsWhenSessionCloses(t *testing.T) {
+	client, peer := net.Pipe()
+	defer peer.Close()
+	config := muxConfig()
+	config.LogOutput = io.Discard
+	session, err := yamux.Client(client, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reason := make(chan string, 1)
+	go watchSession(context.Background(), session, nil, func(event string) { reason <- event })
+	session.Close()
+	select {
+	case got := <-reason:
+		if got != "session_ended" {
+			t.Fatalf("close reason = %q, want session_ended", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("watcher did not exit when session closed")
 	}
 }
 
