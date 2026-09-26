@@ -114,8 +114,11 @@ func TestServerEventStream(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", targetAddress)
 	}
 	var logs []string
+	var failures []string
 	s := &Server{Policy: policy, Username: "requestor", Password: "secret", Identity: serverKey, DeviceKey: deviceKey.Public().(ed25519.PublicKey), Logger: func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
+	}, ErrorLogger: func(format string, args ...any) {
+		failures = append(failures, fmt.Sprintf(format, args...))
 	}}
 	proxy := httptest.NewTLSServer(s)
 	defer proxy.Close()
@@ -157,13 +160,38 @@ func TestServerEventStream(t *testing.T) {
 	}
 	response.Body.Close()
 	combined := strings.Join(logs, "\n")
-	for _, want := range []string{"event=tunnel_connected", "event=request_open", "event=request_done", "event=destination_forbidden", "event=auth_failed"} {
+	for _, want := range []string{"event=tunnel_connected", "event=request_open", "event=request_done", "event=destination_forbidden"} {
 		if !strings.Contains(combined, want) {
 			t.Errorf("event %q missing from server log: %s", want, combined)
 		}
 	}
 	if strings.Contains(combined, "secret-content") || strings.Contains(combined, "secret") {
 		t.Errorf("response or credential content leaked into server log: %s", combined)
+	}
+	if len(failures) != 1 || !strings.Contains(failures[0], "event=auth_failed") {
+		t.Errorf("expected only the invalid-credential attempt as an error: %v", failures)
+	}
+}
+
+func TestUnavailableDeviceIsAnErrorEvent(t *testing.T) {
+	var routine, failures []string
+	s := &Server{Policy: Policy{Hosts: []string{"example.com"}, Ports: []int{80}},
+		Username: "requestor", Password: "secret",
+		Logger:      func(format string, args ...any) { routine = append(routine, fmt.Sprintf(format, args...)) },
+		ErrorLogger: func(format string, args ...any) { failures = append(failures, fmt.Sprintf(format, args...)) },
+	}
+	proxy := httptest.NewServer(s)
+	defer proxy.Close()
+	proxyURL, _ := url.Parse(proxy.URL)
+	proxyURL.User = url.UserPassword("requestor", "secret")
+	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
+	response, err := client.Get("http://example.com/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable || len(failures) != 1 || !strings.Contains(failures[0], "event=device_unavailable") || len(routine) != 0 {
+		t.Fatalf("unexpected severity: status=%d routine=%v failures=%v", response.StatusCode, routine, failures)
 	}
 }
 

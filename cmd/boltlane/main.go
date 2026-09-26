@@ -31,6 +31,8 @@ func main() {
 	}
 }
 
+var infoLog = log.New(os.Stdout, "", log.LstdFlags)
+
 func run() error {
 	if len(os.Args) < 2 {
 		return errors.New("usage: boltlane keygen <private-key-file> | server | device | probe <https-url>")
@@ -167,9 +169,8 @@ func server() error {
 	if user == "" || len(password) < 24 {
 		return errors.New("proxy credentials missing or weak")
 	}
-	s := &proxy.Server{Policy: p, Username: user, Password: password, Identity: identity, DeviceKey: deviceKey, Logger: func(format string, args ...any) {
-		log.Printf(format, args...)
-	}}
+	s := &proxy.Server{Policy: p, Username: user, Password: password, Identity: identity, DeviceKey: deviceKey,
+		Logger: infoLog.Printf, ErrorLogger: log.Printf}
 	addr := os.Getenv("BOLTLANE_LISTEN")
 	if addr == "" {
 		addr = ":8080"
@@ -185,10 +186,10 @@ func server() error {
 		if os.Getenv("BOLTLANE_UNSAFE_TRUSTED_PRIVATE_LISTENER") != "yes" {
 			return errors.New("TLS required (or explicitly acknowledge trusted private listener)")
 		}
-		log.Print("server listening behind trusted private TLS termination")
+		infoLog.Print("server listening behind trusted private TLS termination")
 		return server.Serve(listener)
 	}
-	log.Print("server listening with TLS")
+	infoLog.Print("server listening with TLS")
 	return server.ServeTLS(listener, cert, key)
 }
 
@@ -225,7 +226,7 @@ func device() error {
 	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "/boltlane/v1/tunnel" {
 		return errors.New("invalid tunnel URL")
 	}
-	log.Printf("approved Device policy: hosts=%v ports=%v server fingerprint=%s", p.Hosts, p.Ports, *approved)
+	infoLog.Printf("approved Device policy: hosts=%v ports=%v server fingerprint=%s", p.Hosts, p.Ports, *approved)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	d := &proxy.Device{Policy: p, Identity: identity, ServerKey: serverKey}
@@ -234,7 +235,7 @@ func device() error {
 			if errors.Is(err, proxy.ErrServerIdentityMismatch) {
 				return err
 			}
-			log.Printf("tunnel disconnected: %v", err)
+			infoLog.Printf("tunnel disconnected: %v; reconnecting in 5s", err)
 		}
 		select {
 		case <-ctx.Done():
