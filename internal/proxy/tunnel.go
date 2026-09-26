@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,10 +34,25 @@ var ErrServerIdentityMismatch = errors.New("server identity mismatch")
 // half-open connection is detected within seconds instead of minutes.
 func muxConfig() *yamux.Config {
 	config := yamux.DefaultConfig()
+	config.LogOutput = yamuxLogOutput{}
 	config.EnableKeepAlive = true
 	config.KeepAliveInterval = tunnelKeepalive
 	config.ConnectionWriteTimeout = 10 * time.Second
 	return config
+}
+
+// yamux reports expected transport teardown as [ERR]. The tunnel lifecycle
+// already records the closure reason, so don't repeat those diagnostics as
+// alarming errors. Preserve unexpected yamux diagnostics on stderr.
+type yamuxLogOutput struct{}
+
+func (yamuxLogOutput) Write(p []byte) (int, error) {
+	message := string(p)
+	if strings.Contains(message, "Failed to read header: failed to get reader:") ||
+		strings.Contains(message, "keepalive failed: i/o deadline reached") {
+		return len(p), nil
+	}
+	return os.Stderr.Write(p)
 }
 
 // watchSession closes the session when the context ends or a liveness probe
